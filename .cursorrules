@@ -1,0 +1,17 @@
+1. Project Overview
+Goal: Assist a beginner developer to build a web application that presents a UI for local file and folder selection and then concatenates the files into one long markdown file that is easy to read. 
+
+Because you are working with a beginner code, always be explicit and detailed about which files to change, how to change them, and where exactly the files are located.
+
+The project is a React-based application that uses a web browser UI to select and concatenate files.
+
+Selective File Concatenation - using a checkbox-based file directory tree navigation UI to navigate locally and select all the files that are relevant to the ticket and pull request. 
+1.  Allow the user to enter a root directory path as a starting point
+2.  Display the full file directory tree starting from the root directory, with checkboxes beside each file and subdirectory
+3.  Allow selective checking of the boxes to include in the concatenation
+4.  When checking the box beside a folder, it should include everything in that folder, including sub-folders and files
+5. When "Next" is clicked, the system then concatenates all the selected files, according to the logic rules outlined in the program
+6.  It should have an easy-to-use UI
+
+
+
