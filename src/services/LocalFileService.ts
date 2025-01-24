@@ -76,11 +76,11 @@ interface DirectoryResponse {
     children?: TreeNode[];
   }
   
-  export const readLocalDirectory = async (rootPath: string): Promise<{ success: boolean; data?: TreeNode[]; error?: string }> => {
+  export const readDirectoryLevel = async (folderPath: string): Promise<{ success: boolean; data?: TreeNode[]; error?: string }> => {
     const response = await fetch('/api/local/directory', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rootPath })
+      body: JSON.stringify({ folderPath })
     });
     return response.json();
   };

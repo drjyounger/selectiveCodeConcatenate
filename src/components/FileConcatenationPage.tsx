@@ -10,62 +10,112 @@ import {
   CircularProgress
 } from '@mui/material';
 import FileTree from './FileTree';
-import { concatenateFiles } from '../services/FileService';
+import { formatConcatenatedFiles } from '../utils/fileFormatter';
 
 const FileConcatenationPage: React.FC = () => {
   const [rootPath, setRootPath] = useState('');
-  const [showTree, setShowTree] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [concatenatedContent, setConcatenatedContent] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
-  const handlePathChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setRootPath(e.target.value);
-    setShowTree(false);
+  const handleBrowse = () => {
+    if (!rootPath.trim()) {
+      setError('Please enter a valid path');
+      return;
+    }
     setError(null);
   };
 
-  const handleFetchDirectory = () => {
-    const trimmedPath = rootPath.trim();
-    if (!trimmedPath) {
-      setError('Please enter a valid root directory path');
-      return;
+  const handleFileSelect = async (paths: string[]) => {
+    setIsProcessing(true);
+    try {
+      // For each path, if it's a directory, get all files recursively
+      let allFiles: string[] = [];
+      for (const path of paths) {
+        try {
+          const response = await fetch('/api/local/directory', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folderPath: path })
+          });
+          const data = await response.json();
+          
+          if (data.success) {
+            // If this is a directory with contents, add all files
+            if (data.data && data.data.length > 0) {
+              const files = data.data.filter((item: any) => !item.isDirectory).map((item: any) => item.id);
+              allFiles = [...allFiles, ...files];
+            } else {
+              // If it's a file or empty directory, add the path itself
+              allFiles.push(path);
+            }
+          }
+        } catch (err) {
+          console.error(`Error processing path ${path}:`, err);
+        }
+      }
+      
+      // Remove duplicates
+      const uniqueFiles = Array.from(new Set(allFiles));
+      setSelectedFiles(uniqueFiles);
+      
+      if (uniqueFiles.length === 0) {
+        setError('No files found in selected paths');
+      } else {
+        setError(null);
+      }
+    } catch (err) {
+      setError('Error processing selected paths');
+      console.error(err);
+    } finally {
+      setIsProcessing(false);
     }
-    setShowTree(true);
-    setError(null);
   };
 
   const handleConcatenate = async () => {
     if (selectedFiles.length === 0) {
-      setError('Please select at least one file');
+      setError('No files selected');
       return;
     }
-
+    
     setLoading(true);
     setError(null);
-
+    
     try {
-      const result = await concatenateFiles(selectedFiles, rootPath);
-      if (result.success && result.data) {
-        setConcatenatedContent(result.data);
-      } else {
-        setError(result.error || 'Failed to concatenate files');
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to concatenate files');
+      const getFileContent = async (path: string): Promise<string> => {
+        const response = await fetch('/api/local/file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filePath: path })
+        });
+        
+        const data = await response.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Failed to read file');
+        }
+        return data.content;
+      };
+
+      const formattedContent = await formatConcatenatedFiles(selectedFiles, getFileContent);
+      setConcatenatedContent(formattedContent);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to concatenate files');
     } finally {
       setLoading(false);
     }
   };
 
   const handleDownload = () => {
+    if (!concatenatedContent) return;
+    
     const blob = new Blob([concatenatedContent], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'concatenated-files.md';
-    link.click();
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'concatenated-files.md';
+    a.click();
     URL.revokeObjectURL(url);
   };
 
@@ -89,42 +139,50 @@ const FileConcatenationPage: React.FC = () => {
           <TextField
             fullWidth
             value={rootPath}
-            onChange={handlePathChange}
+            onChange={(e) => setRootPath(e.target.value)}
             placeholder="/path/to/your/project"
             sx={{ mb: 2 }}
           />
           <Button
             variant="contained"
-            onClick={handleFetchDirectory}
+            onClick={handleBrowse}
             disabled={loading || !rootPath.trim()}
           >
             Browse Files
           </Button>
         </Box>
 
-        {showTree && (
+        {rootPath && (
           <Box sx={{ mb: 3 }}>
             <FileTree
               rootPath={rootPath}
-              onSelect={setSelectedFiles}
-              onError={(error: Error) => setError(error.message)}
+              onSelect={handleFileSelect}
+              onError={(err) => setError(err.message)}
             />
           </Box>
         )}
 
-        <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
+        <Box sx={{ display: 'flex', gap: 2, mb: 3, mt: 2 }}>
           <Button
             variant="contained"
             onClick={handleConcatenate}
-            disabled={loading || selectedFiles.length === 0}
+            disabled={loading || isProcessing || selectedFiles.length === 0}
           >
-            {loading ? <CircularProgress size={24} /> : 'Concatenate Files'}
+            {loading || isProcessing ? (
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <CircularProgress size={24} sx={{ mr: 1 }} />
+                {loading ? 'Concatenating...' : 'Processing Selection...'}
+              </Box>
+            ) : (
+              'Concatenate Files'
+            )}
           </Button>
+
           {concatenatedContent && (
             <Button
               variant="outlined"
               onClick={handleDownload}
-              disabled={loading}
+              disabled={loading || isProcessing}
             >
               Download Markdown
             </Button>

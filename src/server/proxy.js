@@ -7,70 +7,199 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Helper function that reads a directory recursively.
-async function readDirRecursive(dirPath) {
-  const items = await fs.readdir(dirPath, { withFileTypes: true });
-  const result = [];
-  for (const item of items) {
-    const fullPath = path.join(dirPath, item.name);
-    result.push({
-      id: fullPath,
-      name: item.name,
-      isDirectory: item.isDirectory(),
-      children: item.isDirectory() ? await readDirRecursive(fullPath) : []
+// Replace the existing readDirRecursive function with this non-recursive version
+async function readDir(dirPath) {
+  try {
+    const items = await fs.readdir(dirPath, { withFileTypes: true });
+    const results = items.map((item) => {
+      const fullPath = path.join(dirPath, item.name);
+      return {
+        id: fullPath,
+        name: item.name,
+        isDirectory: item.isDirectory(),
+      };
     });
+    
+    // Add logging to help debug
+    console.log(`Successfully processed ${results.length} items in ${dirPath}`);
+    return results;
+  } catch (error) {
+    console.error('Error in readDir:', {
+      path: dirPath,
+      error: error.message,
+      stack: error.stack
+    });
+    throw error;
   }
-  return result;
 }
 
-// Basic "isPathSafe" check to avoid scanning system folders
+// Simplified path safety check that allows project directories
 function isPathSafe(filePath) {
-  const sensitivePatterns = [
-    /\/\.git\//,
-    /\/node_modules\//,
-    /\/\.env/,
+  const normalizedPath = path.normalize(filePath);
+  
+  // Block access to obviously sensitive paths
+  const dangerousPatterns = [
     /\/\.ssh\//,
-    /\/\.aws\//
+    /\/\.aws\//,
+    /\/\.config\//,
+    /\/\.bash_history/,
+    /\/\.env$/,
+    /\/\.env\./,
+    /password/i,
+    /secret/i,
   ];
-  return !sensitivePatterns.some((pattern) => pattern.test(filePath));
+
+  // Allow specific project directories
+  const allowedPaths = [
+    '/Users/jamesyounger/Dropbox/TempStarsCoding',
+    '/Users/jamesyounger/Dropbox/TempStarsCoding/TempStarsApp'
+  ];
+
+  // Check if path is in allowed paths
+  if (allowedPaths.some(allowedPath => normalizedPath.startsWith(allowedPath))) {
+    return true;
+  }
+
+  // Check if path contains dangerous patterns
+  if (dangerousPatterns.some(pattern => pattern.test(normalizedPath))) {
+    console.log('Blocked access to sensitive path:', normalizedPath);
+    return false;
+  }
+
+  // By default, be restrictive
+  console.log('Path not explicitly allowed:', normalizedPath);
+  return false;
 }
 
-// 1) POST /api/local/directory
+// Directory listing endpoint
 app.post('/api/local/directory', async (req, res) => {
   try {
-    const { rootPath } = req.body;
-    if (!rootPath) throw new Error('No rootPath provided');
-
-    const absoluteRoot = path.resolve(rootPath);
-    if (!isPathSafe(absoluteRoot)) {
-      return res.status(403).json({ success: false, error: 'Directory not allowed' });
+    const { folderPath } = req.body;
+    if (!folderPath) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'No folderPath provided' 
+      });
     }
 
-    const children = await readDirRecursive(absoluteRoot);
-    res.json({ success: true, data: children });
+    const absolutePath = path.resolve(folderPath);
+    console.log('Attempting to read path:', absolutePath);
+
+    if (!isPathSafe(absolutePath)) {
+      console.log('Access denied:', absolutePath);
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Access not allowed for security reasons' 
+      });
+    }
+
+    // Check if path exists and is readable
+    try {
+      await fs.access(absolutePath, fs.constants.R_OK);
+    } catch (error) {
+      console.log('Access error:', error);
+      return res.status(403).json({
+        success: false,
+        error: `Cannot access path: ${error.message}`
+      });
+    }
+
+    // Check if path is a directory or file
+    const stats = await fs.stat(absolutePath);
+    
+    if (stats.isDirectory()) {
+      const children = await readDir(absolutePath);
+      console.log('Successfully read directory:', absolutePath);
+      console.log('Directory contents:', JSON.stringify(children, null, 2));
+      
+      return res.json({ 
+        success: true, 
+        data: children,
+        type: 'directory'
+      });
+    } else {
+      // If it's a file, return it as a leaf node
+      return res.json({
+        success: true,
+        data: [{
+          id: absolutePath,
+          name: path.basename(absolutePath),
+          isDirectory: false
+        }],
+        type: 'file'
+      });
+    }
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Detailed error:', {
+      message: error.message,
+      stack: error.stack,
+      code: error.code
+    });
+    
+    return res.status(500).json({ 
+      success: false, 
+      error: `Failed to read path: ${error.message}`,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
-// 2) POST /api/local/file
+// File reading endpoint
 app.post('/api/local/file', async (req, res) => {
   try {
     const { filePath } = req.body;
-    if (!filePath) throw new Error('No filePath provided');
+    if (!filePath) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'No filePath provided' 
+      });
+    }
+
     const absolutePath = path.resolve(filePath);
+    console.log('Attempting to read file:', absolutePath);
+
     if (!isPathSafe(absolutePath)) {
-      return res.status(403).json({ success: false, error: 'File path not allowed' });
+      console.log('File access denied:', absolutePath);
+      return res.status(403).json({ 
+        success: false, 
+        error: 'File access not allowed for security reasons' 
+      });
+    }
+
+    // Check if file exists and is readable
+    try {
+      await fs.access(absolutePath, fs.constants.R_OK);
+    } catch (error) {
+      console.log('File access error:', error);
+      return res.status(403).json({
+        success: false,
+        error: `Cannot access file: ${error.message}`
+      });
+    }
+
+    // Check if path is a directory
+    const stats = await fs.stat(absolutePath);
+    if (stats.isDirectory()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot read a directory as a file'
+      });
     }
 
     const content = await fs.readFile(absolutePath, 'utf8');
+    console.log('Successfully read file:', absolutePath);
     res.json({ success: true, content });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('File reading error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: `Failed to read file: ${error.message}` 
+    });
   }
 });
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.REACT_APP_SERVER_PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log('Server is allowing access to project directories');
 }); 

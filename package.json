@@ -8,12 +8,11 @@
     "@emotion/styled": "^11.11.0",
     "@mui/icons-material": "^5.15.3",
     "@mui/material": "^5.15.3",
-    "@mui/x-tree-view": "^7.24.0",
     "@types/node": "^16.18.70",
+    "@types/rc-tree": "^1.11.4",
     "@types/react": "^18.2.47",
     "@types/react-dom": "^18.2.18",
-    "cors": "^2.8.5",
-    "express": "^4.18.2",
+    "rc-tree": "^5.13.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1",
@@ -44,5 +43,8 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
   }
 }

@@ -1,124 +1,186 @@
 // src/components/FileTree.tsx
 
 import React, { useEffect, useState } from 'react';
-import { SimpleTreeView } from '@mui/x-tree-view/SimpleTreeView';
-import { TreeItem } from '@mui/x-tree-view/TreeItem';
-import { Box, Checkbox, Typography } from '@mui/material';
-import { Folder, InsertDriveFile } from '@mui/icons-material';
-import { readLocalDirectory, TreeNode } from '../services/LocalFileService';
+import type { DataNode } from 'rc-tree/lib/interface';
+import Tree from 'rc-tree';
+import type { Key } from 'rc-tree/lib/interface';
+import 'rc-tree/assets/index.css';
+import { Box } from '@mui/material';
+
+interface ServerNode {
+  id: string;
+  name: string;
+  isDirectory: boolean;
+}
 
 interface FileTreeProps {
   rootPath: string;
-  onSelect: (files: string[]) => void;
-  onError: (error: Error) => void;
+  onSelect: (paths: string[]) => void;
+  onError: (err: Error) => void;
+}
+
+interface NodeMap {
+  [key: string]: {
+    isDirectory: boolean;
+    children: string[];
+  };
 }
 
 const FileTree: React.FC<FileTreeProps> = ({ rootPath, onSelect, onError }) => {
-  const [treeData, setTreeData] = useState<TreeNode | null>(null);
-  const [selectedItems, setSelectedItems] = useState<string[]>([]);
-  const [expanded, setExpanded] = useState<string[]>([]);
+  const [treeData, setTreeData] = useState<DataNode[]>([]);
+  const [expandedKeys, setExpandedKeys] = useState<Key[]>([]);
+  const [nodeMap, setNodeMap] = useState<NodeMap>({});
 
   useEffect(() => {
-    const fetchDirectory = async () => {
-      try {
-        const response = await readLocalDirectory(rootPath);
-        if (!response.success || !response.data) {
-          throw new Error(response.error || 'Failed to fetch directory');
-        }
-        setTreeData({
-          id: rootPath,
-          name: rootPath.split('/').pop() || rootPath,
-          isDirectory: true,
-          children: response.data
-        });
-      } catch (err: any) {
-        onError(err);
-      }
-    };
+    if (!rootPath) return;
+    loadDirectory(rootPath, true);
+  }, [rootPath]);
 
-    if (rootPath) {
-      fetchDirectory();
-    }
-  }, [rootPath, onError]);
+  const loadDirectory = async (dirPath: string, isRoot: boolean = false) => {
+    try {
+      const response = await fetch('/api/local/directory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath: dirPath })
+      });
+      const resData = await response.json();
+      
+      if (!resData.success) throw new Error(resData.error);
+      
+      const newData = convertToRcTreeData(resData.data);
+      
+      // Update node map
+      const newNodeMap = { ...nodeMap };
+      resData.data.forEach((node: ServerNode) => {
+        newNodeMap[node.id] = {
+          isDirectory: node.isDirectory,
+          children: []
+        };
+      });
+      setNodeMap(newNodeMap);
 
-  const handleToggleSelection = (nodeId: string, isDirectory: boolean) => {
-    setSelectedItems((prev) => {
-      const newSelection = new Set(prev);
-      if (newSelection.has(nodeId)) {
-        newSelection.delete(nodeId);
+      if (isRoot) {
+        setTreeData(newData);
       } else {
-        newSelection.add(nodeId);
+        setTreeData(updateTreeDataWithChildren(treeData, dirPath, newData));
+      }
+
+      // If this is a directory being checked, load all its contents recursively
+      for (const node of resData.data) {
+        if (node.isDirectory) {
+          await loadDirectory(node.id);
+        }
+      }
+    } catch (err) {
+      onError(err instanceof Error ? err : new Error('Failed to load directory'));
+    }
+  };
+
+  const getAllFilesInDirectory = async (dirPath: string): Promise<string[]> => {
+    try {
+      const response = await fetch('/api/local/directory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath: dirPath })
+      });
+      const resData = await response.json();
+      
+      if (!resData.success) throw new Error(resData.error);
+
+      let files: string[] = [];
+      
+      for (const item of resData.data) {
+        if (item.isDirectory) {
+          // Recursively get files from subdirectory
+          const subFiles = await getAllFilesInDirectory(item.id);
+          files = [...files, ...subFiles];
+        } else {
+          files.push(item.id);
+        }
       }
       
-      if (isDirectory && treeData) {
-        const updateChildren = (node: TreeNode) => {
-          if (node.id === nodeId) {
-            if (newSelection.has(nodeId)) {
-              const addAllChildren = (n: TreeNode) => {
-                if (!n.isDirectory) {
-                  newSelection.add(n.id);
-                }
-                n.children?.forEach(addAllChildren);
-              };
-              node.children?.forEach(addAllChildren);
-            } else {
-              const removeAllChildren = (n: TreeNode) => {
-                newSelection.delete(n.id);
-                n.children?.forEach(removeAllChildren);
-              };
-              node.children?.forEach(removeAllChildren);
-            }
-          } else {
-            node.children?.forEach(updateChildren);
-          }
-        };
-        
-        updateChildren(treeData);
-      }
+      return files;
+    } catch (err) {
+      console.error('Error scanning directory:', err);
+      return [];
+    }
+  };
 
-      const result = Array.from(newSelection);
-      onSelect(result.filter(id => !id.endsWith('/')));
-      return result;
+  const updateTreeDataWithChildren = (
+    data: DataNode[],
+    parentKey: string,
+    children: DataNode[]
+  ): DataNode[] => {
+    return data.map(node => {
+      if (node.key === parentKey) {
+        return { ...node, children };
+      }
+      if (node.children) {
+        return {
+          ...node,
+          children: updateTreeDataWithChildren(node.children, parentKey, children)
+        };
+      }
+      return node;
     });
   };
 
-  const renderTree = (node: TreeNode) => {
-    const isSelected = selectedItems.includes(node.id);
-    
-    return (
-      <TreeItem
-        key={node.id}
-        itemId={node.id}
-        label={
-          <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5 }}>
-            <Checkbox
-              checked={isSelected}
-              onChange={(e) => {
-                e.stopPropagation();
-                handleToggleSelection(node.id, node.isDirectory);
-              }}
-              onClick={(e) => e.stopPropagation()}
-            />
-            {node.isDirectory ? <Folder color="primary" /> : <InsertDriveFile />}
-            <Typography sx={{ ml: 1 }}>{node.name}</Typography>
-          </Box>
-        }
-      >
-        {Array.isArray(node.children) && node.children.map((child) => renderTree(child))}
-      </TreeItem>
-    );
+  const convertToRcTreeData = (nodes: ServerNode[]): DataNode[] => {
+    return nodes.map((item) => ({
+      key: item.id,
+      title: item.name,
+      isLeaf: !item.isDirectory,
+      children: item.isDirectory ? [] : undefined
+    }));
   };
 
-  if (!treeData) return null;
+  const onLoadData = async (treeNode: DataNode) => {
+    if (treeNode.isLeaf || (treeNode.children && treeNode.children.length > 0)) {
+      return Promise.resolve();
+    }
+    return loadDirectory(treeNode.key as string);
+  };
+
+  const onCheck = async (checkedKeys: Key[] | { checked: Key[]; halfChecked: Key[] }) => {
+    const checked = Array.isArray(checkedKeys) ? checkedKeys : checkedKeys.checked;
+    let allFiles: string[] = [];
+
+    for (const key of checked) {
+      const nodePath = key.toString();
+      const node = nodeMap[nodePath];
+
+      if (node?.isDirectory) {
+        // For directories, get all files recursively
+        const filesInDir = await getAllFilesInDirectory(nodePath);
+        allFiles = [...allFiles, ...filesInDir];
+      } else {
+        // For individual files, add directly
+        allFiles.push(nodePath);
+      }
+    }
+
+    // Remove duplicates and notify parent
+    const uniqueFiles = Array.from(new Set(allFiles));
+    onSelect(uniqueFiles);
+  };
+
+  const onExpand = (expandedKeys: Key[]) => {
+    setExpandedKeys(expandedKeys);
+  };
 
   return (
-    <Box sx={{ maxHeight: '60vh', overflow: 'auto' }}>
-      <SimpleTreeView
-        expandedItems={expanded}
-        onExpandedItemsChange={(event: React.SyntheticEvent, nodeIds: string[]) => setExpanded(nodeIds)}
-      >
-        {renderTree(treeData)}
-      </SimpleTreeView>
+    <Box sx={{ maxHeight: '60vh', overflow: 'auto', bgcolor: 'background.paper' }}>
+      <Tree
+        checkable
+        treeData={treeData}
+        loadData={onLoadData}
+        onCheck={onCheck}
+        onExpand={onExpand}
+        expandedKeys={expandedKeys}
+        defaultExpandAll={false}
+        autoExpandParent={true}
+        checkStrictly={false} // This enables parent-child checkbox relationship
+      />
     </Box>
   );
 };
