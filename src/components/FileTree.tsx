@@ -26,6 +26,20 @@ interface NodeMap {
   };
 }
 
+// Add these constants
+const TEXT_EXTENSIONS = new Set([
+  '.txt', '.md', '.py', '.js', '.html', '.css', '.json', '.xml', '.yaml', '.yml',
+  '.sh', '.bat', '.ps1', '.java', '.c', '.cpp', '.h', '.hpp', '.cs', '.php',
+  '.rb', '.go', '.rs', '.ts', '.jsx', '.tsx', '.vue', '.scala', '.kt', '.groovy',
+  '.gradle', '.sql', '.gitignore', '.env', '.cfg', '.ini', '.toml', '.csv'
+]);
+
+const isTextFile = (filename: string): boolean => {
+  if (filename === '.cursorrules') return true;
+  const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
+  return TEXT_EXTENSIONS.has(ext);
+};
+
 const FileTree: React.FC<FileTreeProps> = ({ rootPath, onSelect, onError }) => {
   const [treeData, setTreeData] = useState<DataNode[]>([]);
   const [expandedKeys, setExpandedKeys] = useState<Key[]>([]);
@@ -64,13 +78,6 @@ const FileTree: React.FC<FileTreeProps> = ({ rootPath, onSelect, onError }) => {
       } else {
         setTreeData(updateTreeDataWithChildren(treeData, dirPath, newData));
       }
-
-      // If this is a directory being checked, load all its contents recursively
-      for (const node of resData.data) {
-        if (node.isDirectory) {
-          await loadDirectory(node.id);
-        }
-      }
     } catch (err) {
       onError(err instanceof Error ? err : new Error('Failed to load directory'));
     }
@@ -81,25 +88,20 @@ const FileTree: React.FC<FileTreeProps> = ({ rootPath, onSelect, onError }) => {
       const response = await fetch('/api/local/directory', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderPath: dirPath })
+        body: JSON.stringify({ 
+          folderPath: dirPath,
+          recursive: true  // Always request recursive listing
+        })
       });
-      const resData = await response.json();
       
+      const resData = await response.json();
       if (!resData.success) throw new Error(resData.error);
 
-      let files: string[] = [];
-      
-      for (const item of resData.data) {
-        if (item.isDirectory) {
-          // Recursively get files from subdirectory
-          const subFiles = await getAllFilesInDirectory(item.id);
-          files = [...files, ...subFiles];
-        } else {
-          files.push(item.id);
-        }
-      }
-      
-      return files;
+      // Since we're getting all files recursively from the server,
+      // we can simply return the file paths
+      return resData.data
+        .filter((item: ServerNode) => !item.isDirectory)
+        .map((item: ServerNode) => item.id);
     } catch (err) {
       console.error('Error scanning directory:', err);
       return [];
@@ -150,11 +152,10 @@ const FileTree: React.FC<FileTreeProps> = ({ rootPath, onSelect, onError }) => {
       const node = nodeMap[nodePath];
 
       if (node?.isDirectory) {
-        // For directories, get all files recursively
+        // Get all files recursively
         const filesInDir = await getAllFilesInDirectory(nodePath);
         allFiles = [...allFiles, ...filesInDir];
-      } else {
-        // For individual files, add directly
+      } else if (isTextFile(nodePath)) {
         allFiles.push(nodePath);
       }
     }

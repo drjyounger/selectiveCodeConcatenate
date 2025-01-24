@@ -7,18 +7,45 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Add this constant at the top of the file
+const TEXT_EXTENSIONS = new Set([
+  '.txt', '.md', '.py', '.js', '.html', '.css', '.json', '.xml', '.yaml', '.yml',
+  '.sh', '.bat', '.ps1', '.java', '.c', '.cpp', '.h', '.hpp', '.cs', '.php',
+  '.rb', '.go', '.rs', '.ts', '.jsx', '.tsx', '.vue', '.scala', '.kt', '.groovy',
+  '.gradle', '.sql', '.gitignore', '.env', '.cfg', '.ini', '.toml', '.csv'
+]);
+
+// Add this helper function
+function isTextFile(filename) {
+  // Special case for .cursorrules
+  if (filename === '.cursorrules') {
+    return true;
+  }
+  const ext = path.extname(filename).toLowerCase();
+  return TEXT_EXTENSIONS.has(ext);
+}
+
 // Replace the existing readDirRecursive function with this non-recursive version
 async function readDir(dirPath) {
   try {
     const items = await fs.readdir(dirPath, { withFileTypes: true });
-    const results = items.map((item) => {
-      const fullPath = path.join(dirPath, item.name);
-      return {
-        id: fullPath,
-        name: item.name,
-        isDirectory: item.isDirectory(),
-      };
-    });
+    const results = items
+      // Update filter to include text file check
+      .filter(item => {
+        if (item.isDirectory()) {
+          return !['node_modules', '.git', '.next', 'dist', 'build'].includes(item.name);
+        }
+        // Only include text files
+        return isTextFile(item.name);
+      })
+      .map((item) => {
+        const fullPath = path.join(dirPath, item.name);
+        return {
+          id: fullPath,
+          name: item.name,
+          isDirectory: item.isDirectory(),
+        };
+      });
     
     // Add logging to help debug
     console.log(`Successfully processed ${results.length} items in ${dirPath}`);
@@ -28,6 +55,44 @@ async function readDir(dirPath) {
       path: dirPath,
       error: error.message,
       stack: error.stack
+    });
+    throw error;
+  }
+}
+
+// Add this new recursive function
+async function readDirRecursive(dirPath) {
+  try {
+    const items = await fs.readdir(dirPath, { withFileTypes: true });
+    let results = [];
+    
+    for (const item of items) {
+      const fullPath = path.join(dirPath, item.name);
+      
+      // Skip excluded directories
+      if (item.isDirectory() && ['node_modules', '.git', '.next', 'dist', 'build'].includes(item.name)) {
+        continue;
+      }
+
+      if (item.isDirectory()) {
+        // Recursively get contents of subdirectories
+        const subDirResults = await readDirRecursive(fullPath);
+        results = results.concat(subDirResults);
+      } else if (isTextFile(item.name)) {
+        // Only add text files
+        results.push({
+          id: fullPath,
+          name: item.name,
+          isDirectory: false
+        });
+      }
+    }
+    
+    return results;
+  } catch (error) {
+    console.error('Error in readDirRecursive:', {
+      path: dirPath,
+      error: error.message
     });
     throw error;
   }
@@ -74,7 +139,7 @@ function isPathSafe(filePath) {
 // Directory listing endpoint
 app.post('/api/local/directory', async (req, res) => {
   try {
-    const { folderPath } = req.body;
+    const { folderPath, recursive } = req.body;
     if (!folderPath) {
       return res.status(400).json({ 
         success: false, 
@@ -108,9 +173,10 @@ app.post('/api/local/directory', async (req, res) => {
     const stats = await fs.stat(absolutePath);
     
     if (stats.isDirectory()) {
-      const children = await readDir(absolutePath);
-      console.log('Successfully read directory:', absolutePath);
-      console.log('Directory contents:', JSON.stringify(children, null, 2));
+      // Use recursive function if recursive flag is true
+      const children = recursive ? 
+        await readDirRecursive(absolutePath) :
+        await readDir(absolutePath);
       
       return res.json({ 
         success: true, 
@@ -156,7 +222,14 @@ app.post('/api/local/file', async (req, res) => {
     }
 
     const absolutePath = path.resolve(filePath);
-    console.log('Attempting to read file:', absolutePath);
+    
+    // Add check for text file
+    if (!isTextFile(path.basename(absolutePath))) {
+      return res.status(400).json({
+        success: false,
+        error: 'Not a valid text file'
+      });
+    }
 
     if (!isPathSafe(absolutePath)) {
       console.log('File access denied:', absolutePath);

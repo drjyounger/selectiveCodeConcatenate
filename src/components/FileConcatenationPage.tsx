@@ -31,7 +31,6 @@ const FileConcatenationPage: React.FC = () => {
   const handleFileSelect = async (paths: string[]) => {
     setIsProcessing(true);
     try {
-      // For each path, if it's a directory, get all files recursively
       let allFiles: string[] = [];
       for (const path of paths) {
         try {
@@ -43,12 +42,12 @@ const FileConcatenationPage: React.FC = () => {
           const data = await response.json();
           
           if (data.success) {
-            // If this is a directory with contents, add all files
             if (data.data && data.data.length > 0) {
-              const files = data.data.filter((item: any) => !item.isDirectory).map((item: any) => item.id);
+              const files = data.data
+                .filter((item: any) => !item.isDirectory)
+                .map((item: any) => item.id);
               allFiles = [...allFiles, ...files];
             } else {
-              // If it's a file or empty directory, add the path itself
               allFiles.push(path);
             }
           }
@@ -57,7 +56,6 @@ const FileConcatenationPage: React.FC = () => {
         }
       }
       
-      // Remove duplicates
       const uniqueFiles = Array.from(new Set(allFiles));
       setSelectedFiles(uniqueFiles);
       
