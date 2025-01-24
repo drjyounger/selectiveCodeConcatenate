@@ -12,7 +12,7 @@ export const formatConcatenatedFiles = async (
   let currentLine = 1;
 
   // Generate table of contents header
-  concatenatedContent += '# Table of Contents\n\n';
+  concatenatedContent += '# This is one large file that contains many files concatenated together.  The file starts with a Table of Contents for this file, which lists every file in that was concatenated along with the file paths.  The table of contents ends with "----", after which you will find the actual file contents, with each file starting with "## File {#}":\n\n';
 
   // First pass: build table of contents
   for (const filePath of selectedFiles) {
